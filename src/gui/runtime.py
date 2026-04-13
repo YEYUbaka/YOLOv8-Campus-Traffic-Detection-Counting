@@ -105,8 +105,6 @@ class FrameReaderThread(QThread):
             return
 
         self._ready_event.set()
-        target_interval = 1.0 / self.source_fps if self.source_mode == "video" and self.source_fps > 0 else 0.0
-        next_deadline = time.perf_counter()
 
         while self.running:
             if self.paused:
@@ -130,14 +128,8 @@ class FrameReaderThread(QThread):
                 self._latest_sequence += 1
                 self._latest_decode_ms = decode_ms
 
-            if target_interval > 0:
-                next_deadline += target_interval
-                now = time.perf_counter()
-                if now < next_deadline:
-                    time.sleep(next_deadline - now)
-                else:
-                    next_deadline = now
-            elif self.source_mode == "camera":
+            # 文件模式优先吃满解码吞吐，显示层只取最新帧。
+            if self.source_mode == "camera":
                 time.sleep(0.001)
 
         cap.release()
@@ -168,6 +160,7 @@ class FrameReaderThread(QThread):
 class DetectionThread(QThread):
     """视频/摄像头检测线程，支持所有增强功能"""
     frame_ready = pyqtSignal(np.ndarray)
+    preview_ready = pyqtSignal(int)
     status_update = pyqtSignal(str)
     stats_update = pyqtSignal(dict)  # 统计数据更新
     warning_update = pyqtSignal(list)  # 预警信息更新
@@ -858,6 +851,7 @@ class DetectionThread(QThread):
                     annotated_frame = self._draw_results(working_frame, **self.last_render_payload)
                     draw_elapsed = time.perf_counter() - draw_start
                     preview_ms = self._store_latest_preview(annotated_frame, frame_sequence)
+                    self.preview_ready.emit(frame_sequence)
 
                     processed_frame_count += 1
                     model_frame_count += 1

@@ -76,10 +76,11 @@ class YOLOv8GUI(QMainWindow):
         self.original_frame_size = None
         self.displayed_pixmap_rect = None
         self.preview_timer = QTimer(self)
-        self.preview_timer.setInterval(33)
+        self.preview_timer.setInterval(100)
         if hasattr(Qt, "PreciseTimer"):
             self.preview_timer.setTimerType(Qt.PreciseTimer)
         self.preview_timer.timeout.connect(self.refresh_preview_frame)
+        self._preview_refresh_pending = False
         self.preview_present_fps = 0.0
         self.preview_present_ms = 0.0
         self.preview_frame_count = 0
@@ -226,7 +227,8 @@ class YOLOv8GUI(QMainWindow):
             self.detection_thread.set_preview_target_size(width, height)
 
     def start_preview_refresh(self):
-        """启动最新预览帧轮询，只展示最新一帧。"""
+        """启动最新预览帧刷新，信号驱动为主，定时轮询兜底。"""
+        self._preview_refresh_pending = False
         self.preview_present_fps = 0.0
         self.preview_present_ms = 0.0
         self.preview_frame_count = 0
@@ -239,6 +241,7 @@ class YOLOv8GUI(QMainWindow):
     def stop_preview_refresh(self):
         """停止预览轮询并清空轮询统计。"""
         self.preview_timer.stop()
+        self._preview_refresh_pending = False
         self.preview_present_fps = 0.0
         self.preview_present_ms = 0.0
         self.preview_frame_count = 0
@@ -279,8 +282,16 @@ class YOLOv8GUI(QMainWindow):
     def _apply_live_runtime_indicators(self, stats):
         apply_live_runtime_indicators(self, stats)
 
+    def request_preview_refresh(self, *_args):
+        """由检测线程发出轻量信号，请求主线程尽快拉取最新预览。"""
+        if self._preview_refresh_pending:
+            return
+        self._preview_refresh_pending = True
+        QTimer.singleShot(0, self.refresh_preview_frame)
+
     def refresh_preview_frame(self):
         """主线程主动拉取最新预览帧，丢弃所有过时帧。"""
+        self._preview_refresh_pending = False
         if not self.detection_thread:
             return
         if not self.detection_thread.isRunning():
@@ -331,6 +342,9 @@ class YOLOv8GUI(QMainWindow):
                 self.preview_frame_count = 0
                 self.preview_present_total = 0.0
                 self.preview_window_start = now
+
+        if self.last_live_stats:
+            self._apply_live_runtime_indicators(self.last_live_stats)
 
     def init_ui(self):
         """初始化用户界面"""
@@ -974,6 +988,7 @@ class YOLOv8GUI(QMainWindow):
         self.detection_thread.status_update.connect(self.status_label.setText)
         self.detection_thread.stats_update.connect(self.update_stats)
         self.detection_thread.warning_update.connect(self.update_warnings)
+        self.detection_thread.preview_ready.connect(self.request_preview_refresh)
         self.detection_thread.start()
         self.start_preview_refresh()
 
@@ -1023,6 +1038,7 @@ class YOLOv8GUI(QMainWindow):
             self.detection_thread.status_update.connect(self.status_label.setText)
             self.detection_thread.stats_update.connect(self.update_stats)
             self.detection_thread.warning_update.connect(self.update_warnings)
+            self.detection_thread.preview_ready.connect(self.request_preview_refresh)
             self.detection_thread.start()
             self.start_preview_refresh()
 

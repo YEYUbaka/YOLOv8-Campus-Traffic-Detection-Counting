@@ -3,6 +3,31 @@
 from datetime import datetime
 
 
+_MOJIBAKE_REPLACEMENTS = {
+    "纰版挒椋庨櫓": "碰撞风险",
+    "纰版挒棰勮": "碰撞预警",
+    "杩濊": "违规",
+    "杩涘叆": "进入",
+    "鍏朵綑": "其余",
+    "鏉￠璀︼紝": "条预警，",
+    "鏉℃湭灞曠ず": "条未展示",
+    "褰撳墠娌℃湁棰勮浜嬩欢銆": "当前没有预警事件。",
+    "妫€娴嬮敊璇細": "检测错误：",
+    "妫€娴嬪凡鍋滄": "检测已停止",
+}
+
+
+def normalize_ui_text(text):
+    normalized = str(text or "").replace("\ufeff", "").strip()
+    for broken, fixed in _MOJIBAKE_REPLACEMENTS.items():
+        normalized = normalized.replace(broken, fixed)
+
+    if "锟" in normalized:
+        normalized = normalized.replace("锟斤拷", "").replace("锟", "")
+
+    return normalized.strip()
+
+
 def build_runtime_note_text(mode, device_display_name, video_resolution_profile=None, inference_fps=0.0):
     parts = [f"模型 {inference_fps:.1f} FPS", device_display_name]
     if mode == "video" and video_resolution_profile:
@@ -142,6 +167,17 @@ def apply_stats_update(window, stats):
 
 def apply_warning_text(warning_text_widget, warnings):
     if not warnings:
-        warning_text_widget.setPlainText("当前没有预警事件。")
+        empty_text = normalize_ui_text("当前没有预警事件。")
+        if warning_text_widget.toPlainText() != empty_text:
+            warning_text_widget.setPlainText(empty_text)
         return
-    warning_text_widget.setPlainText("\n".join(warnings))
+
+    text = "\n".join(
+        normalized for normalized in (normalize_ui_text(warning) for warning in warnings)
+        if normalized
+    )
+    if not text:
+        text = normalize_ui_text("当前没有预警事件。")
+
+    if warning_text_widget.toPlainText() != text:
+        warning_text_widget.setPlainText(text)
