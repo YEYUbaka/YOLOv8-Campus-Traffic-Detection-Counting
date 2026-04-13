@@ -1,0 +1,19 @@
+# datasets.yaml
+path: E:/Code_save/Python/计算机视觉/YOLOv8-Campus-Traffic-Detection-Counting/datasets  # 数据集根目录
+train: images/train  # 训练集路径
+val: images/val      # 验证集路径
+test: images/val     # 测试集路径
+
+# 类别信息 - 校园交通检测系统支持的类别
+# 共7个类别：行人、自行车、轿车、摩托车、公交车、卡车、三轮车
+names:
+  0: person       # 行人
+  1: bicycle      # 自行车
+  2: car          # 轿车
+  3: motorcycle   # 摩托车
+  4: bus          # 公交车
+  5: truck        # 卡车
+  6: tricycle     # 三轮车
+
+# 数据集统计信息
+nc: 7  # 类别数量
