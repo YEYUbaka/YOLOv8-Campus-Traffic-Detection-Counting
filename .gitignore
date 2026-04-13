@@ -1,0 +1,35 @@
+﻿# 忽略数据集内容但保留目录结构
+datasets/images/*
+!datasets/images/.gitkeep
+datasets/labels/*
+!datasets/labels/.gitkeep
+
+# 忽略训练结果和缓存
+src/runs/
+runs/detect/predict*/
+runs/detect/train/weights/*.pt
+*.cache
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# 忽略预训练权重（训练时会自动下载）
+models/*.pt
+
+# 忽略系统文件
+.DS_Store
+Thumbs.db
+*.zip
+*.tgz
+
+# IDE 配置
+.idea/
+.vscode/
+.claude/
+
+# 忽略文档文件夹
+doc/
+
+# 忽略其他临时文件
+CLAUDE.md

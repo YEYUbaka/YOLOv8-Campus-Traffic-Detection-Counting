@@ -1,0 +1,238 @@
+/* YOLOv8 校园交通目标检测系统 - 深色主题样式表 */
+
+/* 全局样式 */
+QMainWindow, QWidget {
+    background-color: #0d1117;
+    color: #e6edf3;
+    font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif;
+    font-size: 14px;
+}
+
+/* 分组框 */
+QGroupBox {
+    background-color: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 12px;
+    margin-top: 16px;
+    padding: 15px 10px 10px 10px;
+    font-weight: bold;
+    font-size: 14px;
+}
+
+QGroupBox::title {
+    subcontrol-origin: margin;
+    subcontrol-position: top left;
+    padding: 6px 16px;
+    background-color: #238636;
+    border-radius: 6px;
+    color: white;
+    left: 12px;
+    font-size: 13px;
+}
+
+/* 视频显示区域 */
+#videoDisplay {
+    background-color: #161b22;
+    border: 2px solid #30363d;
+    border-radius: 12px;
+    color: #8b949e;
+    font-size: 16px;
+}
+
+/* 状态栏 */
+#statusBar {
+    color: #7ee787;
+    padding: 10px 15px;
+    background-color: #161b22;
+    border-radius: 6px;
+    font-size: 13px;
+    min-height: 30px;
+}
+
+/* 按钮基础样式 */
+QPushButton {
+    background-color: #21262d;
+    border: 1px solid #30363d;
+    border-radius: 8px;
+    padding: 8px 12px;
+    color: #e6edf3;
+    font-size: 13px;
+    font-weight: 500;
+}
+
+QPushButton:hover {
+    background-color: #30363d;
+    border-color: #8b949e;
+}
+
+QPushButton:pressed {
+    background-color: #161b22;
+}
+
+QPushButton:disabled {
+    background-color: #161b22;
+    color: #484f58;
+    border-color: #21262d;
+}
+
+/* 主要按钮 */
+#primaryBtn {
+    background-color: #238636;
+    border-color: #238636;
+    color: white;
+}
+
+#primaryBtn:hover {
+    background-color: #2ea043;
+    border-color: #2ea043;
+}
+
+/* 危险按钮 */
+#dangerBtn {
+    background-color: #da3633;
+    border-color: #da3633;
+    color: white;
+}
+
+#dangerBtn:hover {
+    background-color: #f85149;
+    border-color: #f85149;
+}
+
+/* 警告按钮 */
+#warningBtn {
+    background-color: #9e6a03;
+    border-color: #9e6a03;
+    color: white;
+}
+
+#warningBtn:hover {
+    background-color: #bb8009;
+    border-color: #bb8009;
+}
+
+/* 信息按钮 */
+#infoBtn {
+    background-color: #1f6feb;
+    border-color: #1f6feb;
+    color: white;
+}
+
+#infoBtn:hover {
+    background-color: #388bfd;
+    border-color: #388bfd;
+}
+
+/* 滑块 */
+QSlider::groove:horizontal {
+    background: #21262d;
+    height: 5px;
+    border-radius: 2px;
+}
+
+QSlider::handle:horizontal {
+    background: #58a6ff;
+    width: 14px;
+    height: 14px;
+    margin: -5px 0;
+    border-radius: 7px;
+    border: 2px solid #58a6ff;
+}
+
+QSlider::handle:horizontal:hover {
+    background: #79c0ff;
+    border-color: #79c0ff;
+}
+
+QSlider::sub-page:horizontal {
+    background: #388bfd;
+    border-radius: 2px;
+}
+
+/* 文本编辑框 */
+#logText {
+    background-color: #0d1117;
+    border: 1px solid #30363d;
+    border-radius: 8px;
+    padding: 8px;
+    color: #7ee787;
+    font-family: 'Cascadia Code', 'Consolas', monospace;
+    font-size: 12px;
+    line-height: 1.4;
+    margin: 0px;
+}
+
+/* 单选按钮 */
+QRadioButton {
+    spacing: 10px;
+    font-size: 13px;
+    padding: 6px 8px;
+}
+
+QRadioButton::indicator {
+    width: 16px;
+    height: 16px;
+    border-radius: 8px;
+    border: 2px solid #30363d;
+    background-color: #21262d;
+}
+
+QRadioButton::indicator:checked {
+    border-color: #58a6ff;
+    background-color: #58a6ff;
+}
+
+QRadioButton::indicator:hover {
+    border-color: #58a6ff;
+}
+
+/* 特殊文本 */
+#successText {
+    color: #7ee787;
+    font-weight: bold;
+    font-size: 13px;
+    padding: 5px 0;
+}
+
+#valueText {
+    font-size: 14px;
+    font-weight: bold;
+    color: #7ee787;
+    min-width: 60px;
+    padding: 4px 8px;
+    min-height: 24px;
+}
+
+#hintText {
+    color: #8b949e;
+    font-size: 11px;
+    font-style: italic;
+    padding: 4px 0;
+}
+
+/* 标签 */
+QLabel {
+    color: #e6edf3;
+    font-size: 13px;
+}
+
+/* 滚动条 */
+QScrollBar:vertical {
+    background: #161b22;
+    width: 10px;
+    border-radius: 5px;
+}
+
+QScrollBar::handle:vertical {
+    background: #30363d;
+    border-radius: 5px;
+    min-height: 30px;
+}
+
+QScrollBar::handle:vertical:hover {
+    background: #484f58;
+}
+
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+    height: 0px;
+}
