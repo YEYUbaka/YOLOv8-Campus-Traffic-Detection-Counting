@@ -15,16 +15,16 @@ QGroupBox {
     background-color: #fbfdf8;
     border: 1px solid #d8e3d5;
     border-radius: 16px;
-    margin-top: 16px;
-    padding: 14px 12px 12px 12px;
+    margin-top: 14px;
+    padding: 12px 10px 10px 10px;
     font-weight: 600;
 }
 
 QGroupBox::title {
     subcontrol-origin: margin;
     subcontrol-position: top left;
-    left: 12px;
-    padding: 3px 10px;
+    left: 10px;
+    padding: 2px 9px;
     background-color: #2f6842;
     color: #ffffff;
     border-radius: 9px;
@@ -66,7 +66,7 @@ QFrame#metricCardWarning,
 QFrame#metricCardStatus {
     border-radius: 16px;
     border: 1px solid #d8e3d5;
-    min-height: 52px;
+    min-height: 48px;
 }
 
 QFrame#metricCardPrimary {
@@ -90,20 +90,20 @@ QFrame#metricCardStatus {
 
 QLabel#metricCaption {
     color: #59705f;
-    font-size: 11px;
+    font-size: 10px;
     font-weight: 600;
     letter-spacing: 0.5px;
 }
 
 QLabel#metricValue {
     color: #234e32;
-    font-size: 24px;
+    font-size: 22px;
     font-weight: 700;
 }
 
 QLabel#metricNote {
     color: #6b7c6e;
-    font-size: 11px;
+    font-size: 10px;
 }
 
 QLabel#sectionLabel {
@@ -202,11 +202,16 @@ QDoubleSpinBox {
     background-color: #ffffff;
     border: 1px solid #d8e3d5;
     border-radius: 12px;
-    padding: 5px;
+    padding: 4px;
     color: #314136;
 }
 
-#warningText {
+#activeWarningTable {
+    background-color: #fffdf8;
+    border-color: #ecdcbf;
+}
+
+#eventTimelineText {
     background-color: #fffdf7;
     border-color: #efd9b8;
 }

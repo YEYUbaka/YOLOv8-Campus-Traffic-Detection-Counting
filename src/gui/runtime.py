@@ -4,6 +4,7 @@
 import os
 import threading
 import time
+from collections import deque
 
 import cv2
 import numpy as np
@@ -163,7 +164,7 @@ class DetectionThread(QThread):
     preview_ready = pyqtSignal(int)
     status_update = pyqtSignal(str)
     stats_update = pyqtSignal(dict)  # 统计数据更新
-    warning_update = pyqtSignal(list)  # 预警信息更新
+    warning_update = pyqtSignal(dict)  # 预警信息更新
 
     def __init__(
         self,
@@ -276,6 +277,9 @@ class DetectionThread(QThread):
         self._latest_preview_sequence = 0
         self._latest_preview_source_size = (self.source_width, self.source_height)
         self._preview_target_size = (0, 0)
+        self._warning_timeline = deque(maxlen=50)
+        self._warning_state_lookup = {}
+        self._warning_state_order = []
 
         # 初始化核心模块
         self.tracker = ObjectTracker(max_age=30, min_hits=3, iou_threshold=0.3)
@@ -298,6 +302,7 @@ class DetectionThread(QThread):
 
         self.last_render_payload = self._build_empty_render_payload()
         self.last_stats_payload = self._build_empty_stats_payload()
+        self.last_warning_payload = self._build_empty_warning_payload()
 
         # 运行状态
         self.running = True
@@ -347,6 +352,108 @@ class DetectionThread(QThread):
             "preview_ms": 0.0,
             "fps": 0.0,
         }
+
+    def _build_empty_warning_payload(self):
+        return {
+            "active_items": [],
+            "timeline_items": [],
+        }
+
+    def _append_timeline_item(self, text):
+        normalized = str(text or "").strip()
+        if not normalized:
+            return
+        self._warning_timeline.appendleft(
+            {
+                "timestamp": time.strftime("%H:%M:%S"),
+                "text": normalized,
+            }
+        )
+
+    def _format_distance_text(self, distance):
+        try:
+            return f"{float(distance):.1f}m"
+        except (TypeError, ValueError):
+            return "未知"
+
+    def _build_warning_payload(self, collision_warnings, zone_violations):
+        active_items = []
+        current_lookup = {}
+        current_order = []
+
+        for warning in collision_warnings:
+            track_ids = sorted((int(warning.track_id_1), int(warning.track_id_2)))
+            key = ("collision", track_ids[0], track_ids[1])
+            if key in current_lookup:
+                continue
+
+            severity = str(getattr(warning, "severity", "high") or "high").lower()
+            severity_label = {
+                "high": "高",
+                "medium": "中",
+                "low": "低",
+            }.get(severity, severity)
+            distance_text = self._format_distance_text(getattr(warning, "distance", None))
+            subject = (
+                f"{warning.class_name_1}#{warning.track_id_1} / "
+                f"{warning.class_name_2}#{warning.track_id_2}"
+            )
+            detail = f"距离 {distance_text} | 等级：{severity_label}"
+
+            current_order.append(key)
+            current_lookup[key] = {
+                "item": {
+                    "kind": "碰撞风险",
+                    "subject": subject,
+                    "detail": detail,
+                    "severity": severity,
+                },
+                "start_text": f"碰撞风险：{subject}，距离 {distance_text}",
+                "end_text": f"碰撞风险解除：{subject}",
+            }
+            active_items.append(current_lookup[key]["item"])
+
+        for violation in zone_violations:
+            zone_name = str(getattr(violation, "zone_name", "区域") or "区域")
+            key = ("zone", int(violation.track_id), zone_name)
+            if key in current_lookup:
+                continue
+
+            subject = f"{violation.class_name}#{violation.track_id}"
+            detail = f"进入 {zone_name} | 等级：高"
+
+            current_order.append(key)
+            current_lookup[key] = {
+                "item": {
+                    "kind": "违规",
+                    "subject": subject,
+                    "detail": detail,
+                    "severity": "high",
+                },
+                "start_text": f"违规：{subject} 进入 {zone_name}",
+                "end_text": f"违规解除：{subject} 离开 {zone_name}",
+            }
+            active_items.append(current_lookup[key]["item"])
+
+        previous_keys = set(self._warning_state_lookup.keys())
+        current_keys = set(current_lookup.keys())
+        state_changed = previous_keys != current_keys
+
+        if state_changed:
+            for key in current_order:
+                if key not in previous_keys:
+                    self._append_timeline_item(current_lookup[key]["start_text"])
+            for key in self._warning_state_order:
+                if key not in current_keys and key in self._warning_state_lookup:
+                    self._append_timeline_item(self._warning_state_lookup[key]["end_text"])
+
+        self._warning_state_lookup = current_lookup
+        self._warning_state_order = list(current_order)
+
+        return {
+            "active_items": active_items,
+            "timeline_items": list(self._warning_timeline),
+        }, state_changed
 
     def _sanitize_fps(self, fps_value):
         try:
@@ -820,28 +927,21 @@ class DetectionThread(QThread):
                     )
 
                     now = time.perf_counter()
+                    warning_payload, warning_changed = self._build_warning_payload(
+                        collision_warnings,
+                        zone_violations,
+                    )
                     warning_refresh_due = (
                         (run_collision_analysis and track_count > 1)
                         or (run_zone_analysis and bool(self.zone_detector.zones))
                         or self._inference_cycle == 1
                     )
-                    if warning_refresh_due and (now - self._last_warning_emit_at >= self.warning_emit_interval):
-                        all_warnings = []
-                        for warning in collision_warnings:
-                            all_warnings.append(
-                                f"碰撞风险: {warning.class_name_1}#{warning.track_id_1} - "
-                                f"{warning.class_name_2}#{warning.track_id_2} ({warning.distance}m)"
-                            )
-                        for violation in zone_violations:
-                            all_warnings.append(
-                                f"违规: {violation.class_name}#{violation.track_id} 进入 {violation.zone_name}"
-                            )
-                        if len(all_warnings) > self.warning_display_limit:
-                            hidden_count = len(all_warnings) - self.warning_display_limit
-                            all_warnings = all_warnings[:self.warning_display_limit] + [
-                                f"... 共 {warning_count} 条预警，其余 {hidden_count} 条未展示"
-                            ]
-                        self.warning_update.emit(all_warnings)
+                    if warning_changed or (
+                        warning_refresh_due
+                        and (now - self._last_warning_emit_at >= self.warning_emit_interval)
+                    ):
+                        self.last_warning_payload = warning_payload
+                        self.warning_update.emit(warning_payload)
                         self._last_warning_emit_at = now
 
                     analysis_elapsed = time.perf_counter() - analysis_start
@@ -1140,9 +1240,13 @@ class DetectionThread(QThread):
         self.zone_detector.reset()
         self.last_render_payload = self._build_empty_render_payload()
         self.last_stats_payload = self._build_empty_stats_payload()
+        self.last_warning_payload = self._build_empty_warning_payload()
         self._cached_speed_infos = []
         self._cached_collision_warnings = []
         self._cached_zone_violations = []
+        self._warning_timeline.clear()
+        self._warning_state_lookup = {}
+        self._warning_state_order = []
         self._inference_cycle = 0
         self._last_stats_emit_at = 0.0
         self._last_warning_emit_at = 0.0

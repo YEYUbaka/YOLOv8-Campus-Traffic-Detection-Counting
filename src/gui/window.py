@@ -47,7 +47,8 @@ from core.counter import ClassCounter
 from gui.presentation import (
     apply_live_runtime_indicators,
     apply_stats_update,
-    apply_warning_text,
+    apply_warning_payload,
+    build_empty_warning_payload,
     build_live_status_text,
     build_runtime_metrics_note,
     build_runtime_note_text,
@@ -374,11 +375,11 @@ class YOLOv8GUI(QMainWindow):
         top_visual_layout.setSpacing(14)
 
         left_kpi_column = QWidget()
-        left_kpi_column.setFixedWidth(148)
+        left_kpi_column.setFixedWidth(160)
         left_kpi_column.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
         left_kpi_layout = QVBoxLayout(left_kpi_column)
         left_kpi_layout.setContentsMargins(0, 0, 0, 0)
-        left_kpi_layout.setSpacing(8)
+        left_kpi_layout.setSpacing(6)
 
         center_visual_column = QWidget()
         center_visual_layout = QVBoxLayout(center_visual_column)
@@ -417,18 +418,18 @@ class YOLOv8GUI(QMainWindow):
         for card in (kpi_card_1, kpi_card_2, kpi_card_3, kpi_card_4):
             card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
-        left_kpi_layout.addStretch(1)
         left_kpi_layout.addWidget(kpi_card_1)
         left_kpi_layout.addWidget(kpi_card_2)
         left_kpi_layout.addWidget(kpi_card_3)
         left_kpi_layout.addWidget(kpi_card_4)
-        left_kpi_layout.addStretch(1)
 
         top_visual_layout.addWidget(left_kpi_column, 0)
         top_visual_layout.addWidget(center_visual_column, 1)
         left_layout.addWidget(top_visual_widget, 1)
 
-        bottom_info_layout = QHBoxLayout()
+        bottom_info_widget = QWidget()
+        bottom_info_layout = QHBoxLayout(bottom_info_widget)
+        bottom_info_layout.setContentsMargins(0, 0, 0, 0)
         bottom_info_layout.setSpacing(8)
 
         stats_group = QGroupBox("分类统计")
@@ -439,29 +440,56 @@ class YOLOv8GUI(QMainWindow):
         self.stats_table.setColumnCount(4)
         self.stats_table.setHorizontalHeaderLabels(["类型", "数量", "上行", "下行"])
         self.stats_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self.stats_table.setMaximumHeight(112)
+        self.stats_table.setMinimumHeight(138)
+        self.stats_table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.stats_table.setAlternatingRowColors(True)
         self.stats_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.stats_table.setSelectionMode(QAbstractItemView.NoSelection)
+        self.stats_table.setFocusPolicy(Qt.NoFocus)
         self.stats_table.verticalHeader().setVisible(False)
-        stats_layout.addWidget(self.stats_table)
+        self.stats_table.verticalHeader().setDefaultSectionSize(26)
+        stats_layout.addWidget(self.stats_table, 1)
         stats_group.setLayout(stats_layout)
-        bottom_info_layout.addWidget(stats_group, 5)
+        bottom_info_layout.addWidget(stats_group, 4)
 
-        warning_group = QGroupBox("预警与事件")
-        warning_layout = QVBoxLayout()
-        warning_layout.setContentsMargins(10, 22, 10, 10)
+        active_warning_group = QGroupBox("当前预警")
+        active_warning_layout = QVBoxLayout()
+        active_warning_layout.setContentsMargins(10, 22, 10, 10)
 
-        self.warning_text = QPlainTextEdit()
-        self.warning_text.setReadOnly(True)
-        self.warning_text.setMaximumHeight(112)
-        self.warning_text.setObjectName("warningText")
-        self.warning_text.setPlaceholderText("检测开始后，这里会显示碰撞风险和违规事件。")
-        warning_layout.addWidget(self.warning_text)
+        self.active_warning_table = QTableWidget()
+        self.active_warning_table.setObjectName("activeWarningTable")
+        self.active_warning_table.setColumnCount(3)
+        self.active_warning_table.setHorizontalHeaderLabels(["类型", "目标", "详情"])
+        self.active_warning_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        self.active_warning_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        self.active_warning_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
+        self.active_warning_table.setMinimumHeight(138)
+        self.active_warning_table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.active_warning_table.setAlternatingRowColors(True)
+        self.active_warning_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.active_warning_table.setSelectionMode(QAbstractItemView.NoSelection)
+        self.active_warning_table.setFocusPolicy(Qt.NoFocus)
+        self.active_warning_table.verticalHeader().setVisible(False)
+        self.active_warning_table.verticalHeader().setDefaultSectionSize(26)
+        active_warning_layout.addWidget(self.active_warning_table, 1)
+        active_warning_group.setLayout(active_warning_layout)
+        bottom_info_layout.addWidget(active_warning_group, 3)
 
-        warning_group.setLayout(warning_layout)
-        bottom_info_layout.addWidget(warning_group, 4)
+        event_group = QGroupBox("事件流水")
+        event_layout = QVBoxLayout()
+        event_layout.setContentsMargins(10, 22, 10, 10)
 
-        left_layout.addLayout(bottom_info_layout)
+        self.event_timeline_text = QPlainTextEdit()
+        self.event_timeline_text.setReadOnly(True)
+        self.event_timeline_text.setObjectName("eventTimelineText")
+        self.event_timeline_text.setMinimumHeight(138)
+        self.event_timeline_text.setPlaceholderText("运行开始后，这里会记录最近 50 条预警变化。")
+        event_layout.addWidget(self.event_timeline_text, 1)
+
+        event_group.setLayout(event_layout)
+        bottom_info_layout.addWidget(event_group, 3)
+
+        left_layout.addWidget(bottom_info_widget)
 
         self.status_label = QLabel("就绪 | 等待开始检测...")
         self.status_label.setObjectName("statusBar")
@@ -703,6 +731,7 @@ class YOLOv8GUI(QMainWindow):
         main_layout.addWidget(right_panel, 0)
 
         self._init_stats_tables()
+        self.reset_warning_views()
         self.reset_metrics_display()
         self._sync_runtime_option_states()
 
@@ -712,8 +741,8 @@ class YOLOv8GUI(QMainWindow):
         card.setObjectName(object_name)
 
         layout = QVBoxLayout(card)
-        layout.setContentsMargins(10, 10, 10, 10)
-        layout.setSpacing(3)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(2)
 
         title_label = QLabel(title)
         title_label.setObjectName("metricCaption")
@@ -726,7 +755,6 @@ class YOLOv8GUI(QMainWindow):
         layout.addWidget(title_label)
         layout.addWidget(value_label)
         layout.addWidget(note_label)
-        layout.addStretch(1)
 
         return card, value_label, note_label
 
@@ -816,6 +844,10 @@ class YOLOv8GUI(QMainWindow):
         self.stats_table.clearContents()
         self._init_stats_tables()
 
+    def reset_warning_views(self):
+        """重置当前预警与事件流水面板。"""
+        apply_warning_payload(self, build_empty_warning_payload())
+
     def _load_stylesheet(self):
         """从外部QSS文件加载样式表"""
         qss_path = os.path.join(self.src_dir, "styles", "campus_ops_light.qss")
@@ -837,6 +869,7 @@ class YOLOv8GUI(QMainWindow):
         self.image_label.clear()
         self.image_label.setText("选择检测模式后点击开始")
         self.reset_metrics_display()
+        self.reset_warning_views()
         self._sync_runtime_option_states()
         self.log_message(f"切换到 {mode} 模式")
 
@@ -964,7 +997,7 @@ class YOLOv8GUI(QMainWindow):
         self.log_message("启动摄像头...")
         self._log_runtime_environment(device_preference=device_preference)
         self.reset_metrics_display()
-        self.warning_text.clear()
+        self.reset_warning_views()
         source_info = self._probe_source_info(0, "camera")
         self._prepare_video_viewport(source_info)
 
@@ -1013,7 +1046,7 @@ class YOLOv8GUI(QMainWindow):
                 video_resolution_profile=video_resolution_profile,
             )
             self.reset_metrics_display()
-            self.warning_text.clear()
+            self.reset_warning_views()
             source_info = self._probe_source_info(file_path, "video")
             self._prepare_video_viewport(source_info)
 
@@ -1060,7 +1093,7 @@ class YOLOv8GUI(QMainWindow):
         self.stop_preview_refresh()
         self.log_message(f"检测图片: {os.path.basename(file_path)}")
         self.reset_metrics_display()
-        self.warning_text.clear()
+        self.reset_warning_views()
 
         try:
             self._log_runtime_environment(device_preference=self._selected_device_preference())
@@ -1128,11 +1161,18 @@ class YOLOv8GUI(QMainWindow):
                 'track_count': 0,
                 'speed_range': (0.0, 0.0),
                 'display_fps': 0.0,
+                'processed_fps': 0.0,
+                'avg_frame_step': 1.0,
+                'decode_ms': 0.0,
+                'model_ms': 0.0,
+                'analysis_ms': 0.0,
+                'draw_ms': 0.0,
+                'preview_ms': 0.0,
                 'inference_fps': 0.0,
                 'fps': 0.0,
             })
             self.runtime_note_label.setText(f"单图 | {image_device_name}")
-            self.update_warnings([])
+            self.reset_warning_views()
             self.status_label.setText(
                 f"图片检测完成 | 设备：{image_device_name} | 当前车辆：{current_vehicle_count} | 去重总车辆：{current_vehicle_count}"
             )
@@ -1147,7 +1187,7 @@ class YOLOv8GUI(QMainWindow):
 
     def update_warnings(self, warnings):
         """更新预警信息"""
-        apply_warning_text(self.warning_text, warnings)
+        apply_warning_payload(self, warnings)
 
     def display_frame(self, frame):
         """显示帧"""
@@ -1207,7 +1247,7 @@ class YOLOv8GUI(QMainWindow):
         self.original_frame_size = None
         self.drawing_mode = None
         self.drawing_points = []
-        self.update_warnings([])
+        self.reset_warning_views()
         self.reset_metrics_display()
 
     def toggle_pause(self):
