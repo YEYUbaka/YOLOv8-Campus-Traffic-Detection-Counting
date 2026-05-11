@@ -973,6 +973,7 @@ class YOLOv8GUI(QMainWindow):
         """重置检测线"""
         if self.detection_thread:
             self.detection_thread.line_counter.reset()
+            self.detection_thread.line_counter.clear_line()
 
     def on_video_clicked(self, x, y, event):
         """视频画面点击事件"""

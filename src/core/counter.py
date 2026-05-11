@@ -486,7 +486,14 @@ class LineCounter:
         self.down_counts.clear()
         self.counted_ids.clear()
         self.track_history.clear()
-        
+
+    def clear_line(self):
+        """清除检测线定义"""
+        self.line_start = None
+        self.line_end = None
+        self.line_direction = 'vertical'
+        self.up_direction = (0, -1)
+
     def is_line_set(self) -> bool:
         """检查检测线是否已设置"""
         return self.line_start is not None and self.line_end is not None
