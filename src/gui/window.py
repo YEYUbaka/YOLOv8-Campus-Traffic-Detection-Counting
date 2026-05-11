@@ -94,6 +94,7 @@ class YOLOv8GUI(QMainWindow):
         self._alarm_playing = False
         self._alarm_cooldown_sec = 3.0
         self._alarm_last_trigger = 0.0
+        self._auto_alarm_audio_dir = None
 
         # 目录路径（兼容 PyInstaller 打包模式）
         from GUI import get_resource_path, get_external_path
@@ -104,6 +105,7 @@ class YOLOv8GUI(QMainWindow):
 
         self.init_model()
         self.init_ui()
+        self._load_default_alarm_audio()
 
     def init_model(self):
         """加载 YOLO 模型"""
@@ -1347,6 +1349,22 @@ class YOLOv8GUI(QMainWindow):
         """超速阈值变化"""
         if self.detection_thread:
             self.detection_thread.update_overspeed_threshold(value)
+
+    def _load_default_alarm_audio(self):
+        """自动加载 assets/audio 目录下的第一个 WAV 文件"""
+        candidates = [
+            os.path.join(self.project_root, "assets", "audio"),
+            os.path.join(self.src_dir, "assets", "audio"),
+        ]
+        for audio_dir in candidates:
+            if not os.path.isdir(audio_dir):
+                continue
+            wavs = sorted(f for f in os.listdir(audio_dir) if f.lower().endswith('.wav'))
+            if wavs:
+                self._alarm_audio_path = os.path.join(audio_dir, wavs[0])
+                self._auto_alarm_audio_dir = audio_dir
+                self.audio_path_label.setText(f"[自动] {wavs[0]}")
+                return
 
     def select_audio_file(self):
         """选择报警音频文件"""
