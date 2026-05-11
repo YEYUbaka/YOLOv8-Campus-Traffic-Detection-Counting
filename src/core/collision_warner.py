@@ -31,7 +31,7 @@ class CollisionWarner:
     
     def __init__(
         self,
-        pixels_per_meter: float = 10.0,
+        pixels_per_meter: float = 90.0,
         safe_distance: float = 5.0,
         warning_distance: float = 10.0
     ):

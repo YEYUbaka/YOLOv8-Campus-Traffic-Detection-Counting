@@ -27,7 +27,7 @@ class SpeedEstimator:
     
     def __init__(
         self,
-        pixels_per_meter: float = 10.0,
+        pixels_per_meter: float = 90.0,
         fps: float = 30.0,
         smoothing_factor: float = 0.3
     ):

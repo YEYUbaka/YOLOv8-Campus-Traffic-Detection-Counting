@@ -17,7 +17,7 @@ class CalibrationManager:
     def __init__(self):
         """初始化标定管理器"""
         # 默认标定参数
-        self.pixels_per_meter: float = 10.0
+        self.pixels_per_meter: float = 90.0
         self.reference_distance: float = 5.0  # 参考距离（米）
         self.reference_pixels: float = 50.0   # 参考像素数
         
@@ -154,13 +154,13 @@ class CalibrationManager:
         with open(filepath, 'r', encoding='utf-8') as f:
             data = json.load(f)
             
-        self.pixels_per_meter = data.get('pixels_per_meter', 10.0)
+        self.pixels_per_meter = data.get('pixels_per_meter', 90.0)
         self.reference_distance = data.get('reference_distance', 5.0)
         self.reference_pixels = data.get('reference_pixels', 50.0)
         
     def reset(self):
         """重置标定"""
-        self.pixels_per_meter = 10.0
+        self.pixels_per_meter = 90.0
         self.reference_distance = 5.0
         self.reference_pixels = 50.0
         self.calibration_points.clear()

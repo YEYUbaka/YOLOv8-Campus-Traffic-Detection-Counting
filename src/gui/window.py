@@ -679,7 +679,7 @@ class YOLOv8GUI(QMainWindow):
         calib_row.addWidget(QLabel("像素/米:"))
         self.calib_spin = QSpinBox()
         self.calib_spin.setRange(1, 500)
-        self.calib_spin.setValue(50)
+        self.calib_spin.setValue(90)
         self.calib_spin.valueChanged.connect(self.on_calibration_changed)
         calib_row.addWidget(self.calib_spin)
         calib_row.addStretch()

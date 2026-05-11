@@ -191,7 +191,7 @@ class DetectionThread(QThread):
         enable_zone=True,
         enable_overspeed=False,
         overspeed_threshold=60,
-        pixels_per_meter=10.0,
+        pixels_per_meter=90.0,
         safe_distance=5.0,
         class_profile: TrafficClassProfile = None,
         source_mode: str = "video",

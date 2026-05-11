@@ -62,7 +62,7 @@ class ZoneDetector:
     支持多个多边形区域，检测目标是否进入违规区域
     """
     
-    def __init__(self, pixels_per_meter: float = 10.0):
+    def __init__(self, pixels_per_meter: float = 90.0):
         """
         初始化违规区域检测器
         
