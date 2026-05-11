@@ -89,6 +89,11 @@ class YOLOv8GUI(QMainWindow):
         self.last_preview_sequence = 0
         self.last_live_stats = None
 
+        # 运行概览时钟定时器
+        self.overview_timer = QTimer(self)
+        self.overview_timer.setInterval(1000)
+        self.overview_timer.timeout.connect(lambda: self.refresh_runtime_overview(self.last_live_stats))
+
         # 超速报警
         self._alarm_audio_path = None
         self._alarm_playing = False
@@ -106,6 +111,7 @@ class YOLOv8GUI(QMainWindow):
         self.init_model()
         self.init_ui()
         self._load_default_alarm_audio()
+        self.overview_timer.start()
 
     def init_model(self):
         """加载 YOLO 模型"""
