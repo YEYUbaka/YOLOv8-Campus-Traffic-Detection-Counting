@@ -623,7 +623,7 @@ class YOLOv8GUI(QMainWindow):
         self.zone_cb = QCheckBox("违规检测")
         self.zone_cb.setChecked(True)
         self.overspeed_cb = QCheckBox("超速检测")
-        self.overspeed_cb.setChecked(False)
+        self.overspeed_cb.setChecked(True)
 
         feature_layout.addWidget(self.tracking_cb, 0, 0)
         feature_layout.addWidget(self.speed_cb, 0, 1)
