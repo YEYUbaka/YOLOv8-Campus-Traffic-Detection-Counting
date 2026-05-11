@@ -1,4 +1,4 @@
-/* YOLOv8 校园交通检测系统 - Campus Ops 明亮主题 */
+/* YOLOv8 校园交通检测系统 - Campus Ops 明亮主题（直角矩形版） */
 
 QMainWindow, QWidget {
     background-color: #f4f7f1;
@@ -14,9 +14,9 @@ QMainWindow, QWidget {
 QGroupBox {
     background-color: #fbfdf8;
     border: 1px solid #d8e3d5;
-    border-radius: 16px;
+    border-radius: 0px;
     margin-top: 14px;
-    padding: 12px 10px 10px 10px;
+    padding: 10px 8px 8px 8px;
     font-weight: 600;
 }
 
@@ -27,13 +27,13 @@ QGroupBox::title {
     padding: 2px 9px;
     background-color: #2f6842;
     color: #ffffff;
-    border-radius: 9px;
+    border-radius: 0px;
 }
 
 #videoDisplayShell {
     background-color: #dde9dd;
     border: 2px solid #c6d7c6;
-    border-radius: 24px;
+    border-radius: 0px;
 }
 
 #videoDisplay {
@@ -47,8 +47,8 @@ QGroupBox::title {
 #statusBar {
     background-color: #fbfdf8;
     border: 1px solid #d8e3d5;
-    border-radius: 14px;
-    padding: 6px 12px;
+    border-radius: 0px;
+    padding: 6px 10px;
 }
 
 #drawHint {
@@ -64,7 +64,7 @@ QFrame#metricCardPrimary,
 QFrame#metricCardNeutral,
 QFrame#metricCardWarning,
 QFrame#metricCardStatus {
-    border-radius: 16px;
+    border-radius: 0px;
     border: 1px solid #d8e3d5;
     min-height: 48px;
 }
@@ -132,8 +132,8 @@ QLabel {
 QPushButton {
     background-color: #ffffff;
     border: 1px solid #cfdccf;
-    border-radius: 11px;
-    padding: 8px 12px;
+    border-radius: 0px;
+    padding: 6px 10px;
     color: #314136;
     font-weight: 600;
 }
@@ -201,7 +201,7 @@ QSpinBox,
 QDoubleSpinBox {
     background-color: #ffffff;
     border: 1px solid #d8e3d5;
-    border-radius: 12px;
+    border-radius: 0px;
     padding: 4px;
     color: #314136;
 }
@@ -227,19 +227,19 @@ QHeaderView::section {
     color: #47624f;
     border: none;
     border-bottom: 1px solid #d8e3d5;
-    padding: 8px;
+    padding: 6px;
     font-weight: 700;
 }
 
 QComboBox {
-    min-height: 32px;
-    padding: 4px 10px;
+    min-height: 28px;
+    padding: 2px 8px;
 }
 
 QComboBox::drop-down {
     subcontrol-origin: padding;
     subcontrol-position: top right;
-    width: 28px;
+    width: 24px;
     border: none;
 }
 
@@ -249,7 +249,7 @@ QComboBox::down-arrow {
     border-left: 5px solid transparent;
     border-right: 5px solid transparent;
     border-top: 7px solid #5f7364;
-    margin-right: 10px;
+    margin-right: 8px;
 }
 
 QComboBox QAbstractItemView {
@@ -261,8 +261,8 @@ QComboBox QAbstractItemView {
 
 QCheckBox,
 QRadioButton {
-    spacing: 6px;
-    padding: 3px 0;
+    spacing: 4px;
+    padding: 2px 0;
 }
 
 QCheckBox::indicator,
@@ -275,32 +275,32 @@ QCheckBox::indicator:unchecked,
 QRadioButton::indicator:unchecked {
     background-color: #ffffff;
     border: 2px solid #b8ceb8;
-    border-radius: 8px;
+    border-radius: 0px;
 }
 
 QCheckBox::indicator:checked,
 QRadioButton::indicator:checked {
     background-color: #2f6842;
     border: 2px solid #2f6842;
-    border-radius: 8px;
+    border-radius: 0px;
 }
 
 QSlider::groove:horizontal {
     background: #e0ebe0;
     height: 6px;
-    border-radius: 3px;
+    border-radius: 0px;
 }
 
 QSlider::sub-page:horizontal {
     background: #5c8b69;
-    border-radius: 3px;
+    border-radius: 0px;
 }
 
 QSlider::handle:horizontal {
     background: #2f6842;
     width: 16px;
     margin: -5px 0;
-    border-radius: 8px;
+    border-radius: 0px;
 }
 
 QScrollArea {
@@ -311,12 +311,12 @@ QScrollArea {
 QScrollBar:vertical {
     background: #edf3ec;
     width: 10px;
-    border-radius: 5px;
+    border-radius: 0px;
 }
 
 QScrollBar::handle:vertical {
     background: #c6d7c6;
-    border-radius: 5px;
+    border-radius: 0px;
     min-height: 30px;
 }
 

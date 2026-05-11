@@ -3,6 +3,7 @@
 
 import os
 import sys
+import threading
 import time
 from datetime import datetime
 
@@ -49,9 +50,6 @@ from gui.presentation import (
     apply_stats_update,
     apply_warning_payload,
     build_empty_warning_payload,
-    build_live_status_text,
-    build_runtime_metrics_note,
-    build_runtime_note_text,
 )
 from gui.runtime import DetectionThread, resolve_runtime_device
 from gui.widgets import StableVideoViewport, VideoDisplayLabel
@@ -68,6 +66,7 @@ class YOLOv8GUI(QMainWindow):
         self.class_profile = DEFAULT_TRAFFIC_CLASS_PROFILE
         self.current_mode = None
         self.detection_thread = None
+        self.runtime_status_message = "等待开始检测"
 
         # 绘制状态
         self.drawing_mode = None
@@ -90,11 +89,14 @@ class YOLOv8GUI(QMainWindow):
         self.last_preview_sequence = 0
         self.last_live_stats = None
 
-        # 目录路径
-        self.module_dir = os.path.dirname(os.path.abspath(__file__))
-        self.src_dir = os.path.dirname(self.module_dir)
-        self.project_root = os.path.dirname(self.src_dir)
-        self.config_dir = os.path.join(self.src_dir, 'configs')
+        # 超速报警
+        self._alarm_audio_path = None
+
+        # 目录路径（兼容 PyInstaller 打包模式）
+        from GUI import get_resource_path, get_external_path
+        self.src_dir = get_resource_path('.')
+        self.project_root = get_external_path('.')
+        self.config_dir = get_external_path('configs')
         os.makedirs(self.config_dir, exist_ok=True)
 
         self.init_model()
@@ -102,11 +104,18 @@ class YOLOv8GUI(QMainWindow):
 
     def init_model(self):
         """加载 YOLO 模型"""
+        from GUI import get_resource_path, get_external_path
         model_paths = [
+            # exe 旁的 models/ 目录（用户可替换）
+            get_external_path(os.path.join("models", "best.pt")),
+            get_external_path(os.path.join("models", "yolov8n.pt")),
+            # 打包时内置的模型
+            get_resource_path(os.path.join("models", "best.pt")),
+            get_resource_path(os.path.join("models", "yolov8n.pt")),
+            # 开发模式下的 runs/ 目录
             os.path.join(self.project_root, "runs", "detect", "train", "weights", "best.pt"),
             os.path.join(self.project_root, "runs", "detect", "train", "weights", "last.pt"),
-            os.path.join(self.project_root, "models", "yolov8n.pt"),
-            os.path.join(self.project_root, "models", "yolo26n.pt"),
+            # 兜底：自动下载
             "yolov8n.pt"
         ]
 
@@ -154,14 +163,51 @@ class YOLOv8GUI(QMainWindow):
         _, _, device_name = resolve_runtime_device(device_preference or self._selected_device_preference())
         return device_name
 
-    def _build_runtime_note_text(self, inference_fps=0.0):
-        video_profile = self._selected_video_resolution_profile() if self.current_mode == "video" else None
-        return build_runtime_note_text(
-            self.current_mode,
-            self._resolved_device_display_name(),
-            video_profile,
-            inference_fps,
-        )
+    def _current_mode_label(self):
+        return {
+            "camera": "摄像头",
+            "video": "视频文件",
+            "image": "图片",
+        }.get(self.current_mode, "未选择")
+
+    def _format_time_str(self, seconds):
+        """将秒数格式化为 HH:MM:SS"""
+        if seconds is None or seconds < 0:
+            return "--:--:--"
+        h = int(seconds // 3600)
+        m = int((seconds % 3600) // 60)
+        s = int(seconds % 60)
+        return f"{h:02d}:{m:02d}:{s:02d}"
+
+    def refresh_runtime_overview(self, _stats=None):
+        status_message = self.runtime_status_message or "等待开始检测"
+        current_time = datetime.now().strftime("%H:%M:%S")
+
+        lines = [f"时间：{current_time} | 状态：{status_message}"]
+
+        # 视频模式：显示播放进度
+        if self.current_mode == "video":
+            if self.detection_thread and self.detection_thread.isRunning():
+                progress = self.detection_thread.get_video_progress()
+                if progress and progress[1] > 0:
+                    cur_str = self._format_time_str(progress[0])
+                    total_str = self._format_time_str(progress[1])
+                    percent = min(100, int(progress[0] / progress[1] * 100))
+                    lines.append(f"视频进度：{cur_str} / {total_str} ({percent}%)")
+            lines.append(f"模式：{self._current_mode_label()}")
+        elif self.current_mode == "camera":
+            lines.append("模式：摄像头实时")
+        elif self.current_mode == "image":
+            lines.append("模式：图片检测")
+
+        self.status_label.setText("\n".join(lines))
+
+    def handle_runtime_status_update(self, message):
+        normalized = str(message or "").strip()
+        if not normalized:
+            return
+        self.runtime_status_message = normalized
+        self.refresh_runtime_overview(self.last_live_stats)
 
     def _sync_runtime_option_states(self):
         running = bool(self.detection_thread and self.detection_thread.isRunning())
@@ -251,35 +297,6 @@ class YOLOv8GUI(QMainWindow):
         self.last_preview_sequence = 0
         self.last_live_stats = None
 
-    def _build_runtime_metrics_note(self, stats):
-        device_display_name = None
-        video_resolution_profile = None
-        if self.detection_thread:
-            device_display_name = self.detection_thread.device_display_name
-            if self.detection_thread.source_mode == "video":
-                video_resolution_profile = self.detection_thread.video_resolution_profile
-        return build_runtime_metrics_note(
-            stats,
-            present_ms=self.preview_present_ms if self.detection_thread else 0.0,
-            device_display_name=device_display_name,
-            video_resolution_profile=video_resolution_profile,
-        )
-
-    def _build_live_status_text(self, stats):
-        device_display_name = None
-        video_resolution_profile = None
-        if self.detection_thread:
-            device_display_name = self.detection_thread.device_display_name
-            if self.detection_thread.source_mode == "video":
-                video_resolution_profile = self.detection_thread.video_resolution_profile
-        return build_live_status_text(
-            stats,
-            display_fps=self.preview_present_fps if self.detection_thread else stats.get('display_fps', 0.0),
-            present_ms=self.preview_present_ms if self.detection_thread else 0.0,
-            device_display_name=device_display_name,
-            video_resolution_profile=video_resolution_profile,
-        )
-
     def _apply_live_runtime_indicators(self, stats):
         apply_live_runtime_indicators(self, stats)
 
@@ -360,31 +377,31 @@ class YOLOv8GUI(QMainWindow):
         main_widget.setObjectName("mainCentral")
         self.setCentralWidget(main_widget)
         main_layout = QHBoxLayout(main_widget)
-        main_layout.setSpacing(12)
-        main_layout.setContentsMargins(12, 12, 12, 12)
+        main_layout.setSpacing(6)
+        main_layout.setContentsMargins(6, 6, 6, 6)
 
-        # 左侧：视频显示区域 + KPI + 统计信息
+        # 左侧：视频显示区域 + 统计信息
         left_widget = QWidget()
         left_layout = QVBoxLayout(left_widget)
         left_layout.setContentsMargins(0, 0, 0, 0)
-        left_layout.setSpacing(10)
+        left_layout.setSpacing(6)
 
         top_visual_widget = QWidget()
         top_visual_layout = QHBoxLayout(top_visual_widget)
         top_visual_layout.setContentsMargins(0, 0, 0, 0)
-        top_visual_layout.setSpacing(14)
+        top_visual_layout.setSpacing(6)
 
-        left_kpi_column = QWidget()
-        left_kpi_column.setFixedWidth(160)
-        left_kpi_column.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
-        left_kpi_layout = QVBoxLayout(left_kpi_column)
-        left_kpi_layout.setContentsMargins(0, 0, 0, 0)
-        left_kpi_layout.setSpacing(6)
+        left_info_column = QWidget()
+        left_info_column.setFixedWidth(220)
+        left_info_column.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
+        left_info_layout = QVBoxLayout(left_info_column)
+        left_info_layout.setContentsMargins(0, 0, 0, 0)
+        left_info_layout.setSpacing(6)
 
         center_visual_column = QWidget()
         center_visual_layout = QVBoxLayout(center_visual_column)
         center_visual_layout.setContentsMargins(0, 0, 0, 0)
-        center_visual_layout.setSpacing(8)
+        center_visual_layout.setSpacing(6)
 
         self.video_shell = StableVideoViewport()
         self.video_shell.setObjectName("videoDisplayShell")
@@ -396,65 +413,75 @@ class YOLOv8GUI(QMainWindow):
         self.video_shell.display_size_changed.connect(self.on_video_display_resized)
         center_visual_layout.addWidget(self.video_shell, 1)
 
-        self.draw_hint_label = QLabel("绘制提示：未启用绘制工具")
+        overview_group = QGroupBox("运行概览")
+        overview_group.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        overview_layout = QVBoxLayout()
+        overview_layout.setSpacing(4)
+        overview_layout.setContentsMargins(8, 22, 8, 8)
+
+        self.status_label = QLabel("就绪\n等待开始检测...")
+        self.status_label.setObjectName("statusBar")
+        self.status_label.setMinimumHeight(80)
+        self.status_label.setAlignment(Qt.AlignLeft | Qt.AlignTop)
+        self.status_label.setWordWrap(True)
+        overview_layout.addWidget(self.status_label)
+
+        # 底部统计小标
+        stats_bar = QHBoxLayout()
+        stats_bar.setSpacing(4)
+        self.total_vehicle_label = QLabel("总车辆: 0")
+        self.total_vehicle_label.setObjectName("metricNote")
+        self.total_vehicle_label.setStyleSheet("font-size:12px; font-weight:600; color:#2f6842;")
+        self.fps_label = QLabel("FPS: 0.0")
+        self.fps_label.setObjectName("metricNote")
+        self.fps_label.setStyleSheet("font-size:12px; font-weight:600; color:#2f6842;")
+        stats_bar.addWidget(self.total_vehicle_label)
+        stats_bar.addStretch()
+        stats_bar.addWidget(self.fps_label)
+        overview_layout.addLayout(stats_bar)
+
+        self.draw_hint_label = QLabel("")
         self.draw_hint_label.setObjectName("drawHint")
         self.draw_hint_label.setWordWrap(True)
-        self.draw_hint_label.setMaximumHeight(32)
-        center_visual_layout.addWidget(self.draw_hint_label)
+        self.draw_hint_label.setMaximumHeight(40)
+        self.draw_hint_label.setAlignment(Qt.AlignLeft | Qt.AlignTop)
+        overview_layout.addWidget(self.draw_hint_label)
+        overview_layout.addStretch(1)
+        overview_group.setLayout(overview_layout)
+        left_info_layout.addWidget(overview_group, 1)
 
-        kpi_card_1, self.unique_vehicle_value_label, self.unique_vehicle_note_label = self._create_kpi_card(
-            "去重总车辆", "metricCardPrimary", "0", "会话累计"
-        )
-        kpi_card_2, self.current_vehicle_value_label, self.current_vehicle_note_label = self._create_kpi_card(
-            "当前画面车辆", "metricCardNeutral", "0", "稳定轨迹"
-        )
-        kpi_card_3, self.warning_count_value_label, self.warning_count_note_label = self._create_kpi_card(
-            "预警数", "metricCardWarning", "0", "碰撞 / 违规"
-        )
-        kpi_card_4, self.runtime_value_label, self.runtime_note_label = self._create_kpi_card(
-            "显示 FPS", "metricCardStatus", "0.0", "等待开始检测"
-        )
-
-        for card in (kpi_card_1, kpi_card_2, kpi_card_3, kpi_card_4):
-            card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-
-        left_kpi_layout.addWidget(kpi_card_1)
-        left_kpi_layout.addWidget(kpi_card_2)
-        left_kpi_layout.addWidget(kpi_card_3)
-        left_kpi_layout.addWidget(kpi_card_4)
-
-        top_visual_layout.addWidget(left_kpi_column, 0)
+        top_visual_layout.addWidget(left_info_column, 0)
         top_visual_layout.addWidget(center_visual_column, 1)
         left_layout.addWidget(top_visual_widget, 1)
 
         bottom_info_widget = QWidget()
         bottom_info_layout = QHBoxLayout(bottom_info_widget)
         bottom_info_layout.setContentsMargins(0, 0, 0, 0)
-        bottom_info_layout.setSpacing(8)
+        bottom_info_layout.setSpacing(4)
 
         stats_group = QGroupBox("分类统计")
         stats_layout = QVBoxLayout()
-        stats_layout.setContentsMargins(10, 22, 10, 10)
+        stats_layout.setContentsMargins(6, 20, 6, 6)
 
         self.stats_table = QTableWidget()
-        self.stats_table.setColumnCount(4)
-        self.stats_table.setHorizontalHeaderLabels(["类型", "数量", "上行", "下行"])
+        self.stats_table.setColumnCount(5)
+        self.stats_table.setHorizontalHeaderLabels(["类型", "当前", "累计", "上行", "下行"])
         self.stats_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self.stats_table.setMinimumHeight(138)
+        self.stats_table.setMinimumHeight(110)
         self.stats_table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.stats_table.setAlternatingRowColors(True)
         self.stats_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.stats_table.setSelectionMode(QAbstractItemView.NoSelection)
         self.stats_table.setFocusPolicy(Qt.NoFocus)
         self.stats_table.verticalHeader().setVisible(False)
-        self.stats_table.verticalHeader().setDefaultSectionSize(26)
+        self.stats_table.verticalHeader().setDefaultSectionSize(24)
         stats_layout.addWidget(self.stats_table, 1)
         stats_group.setLayout(stats_layout)
         bottom_info_layout.addWidget(stats_group, 4)
 
         active_warning_group = QGroupBox("当前预警")
         active_warning_layout = QVBoxLayout()
-        active_warning_layout.setContentsMargins(10, 22, 10, 10)
+        active_warning_layout.setContentsMargins(6, 20, 6, 6)
 
         self.active_warning_table = QTableWidget()
         self.active_warning_table.setObjectName("activeWarningTable")
@@ -463,26 +490,26 @@ class YOLOv8GUI(QMainWindow):
         self.active_warning_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
         self.active_warning_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
         self.active_warning_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
-        self.active_warning_table.setMinimumHeight(138)
+        self.active_warning_table.setMinimumHeight(110)
         self.active_warning_table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.active_warning_table.setAlternatingRowColors(True)
         self.active_warning_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.active_warning_table.setSelectionMode(QAbstractItemView.NoSelection)
         self.active_warning_table.setFocusPolicy(Qt.NoFocus)
         self.active_warning_table.verticalHeader().setVisible(False)
-        self.active_warning_table.verticalHeader().setDefaultSectionSize(26)
+        self.active_warning_table.verticalHeader().setDefaultSectionSize(24)
         active_warning_layout.addWidget(self.active_warning_table, 1)
         active_warning_group.setLayout(active_warning_layout)
         bottom_info_layout.addWidget(active_warning_group, 3)
 
         event_group = QGroupBox("事件流水")
         event_layout = QVBoxLayout()
-        event_layout.setContentsMargins(10, 22, 10, 10)
+        event_layout.setContentsMargins(6, 20, 6, 6)
 
         self.event_timeline_text = QPlainTextEdit()
         self.event_timeline_text.setReadOnly(True)
         self.event_timeline_text.setObjectName("eventTimelineText")
-        self.event_timeline_text.setMinimumHeight(138)
+        self.event_timeline_text.setMinimumHeight(110)
         self.event_timeline_text.setPlaceholderText("运行开始后，这里会记录最近 50 条预警变化。")
         event_layout.addWidget(self.event_timeline_text, 1)
 
@@ -491,27 +518,20 @@ class YOLOv8GUI(QMainWindow):
 
         left_layout.addWidget(bottom_info_widget)
 
-        self.status_label = QLabel("就绪 | 等待开始检测...")
-        self.status_label.setObjectName("statusBar")
-        self.status_label.setMinimumHeight(24)
-        self.status_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-        self.status_label.setWordWrap(True)
-        left_layout.addWidget(self.status_label)
-
         main_layout.addWidget(left_widget, 1)
 
         # 右侧：控制面板
         right_panel = QWidget()
-        right_panel.setFixedWidth(320)
+        right_panel.setFixedWidth(300)
         right_panel.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
         right_layout = QVBoxLayout(right_panel)
-        right_layout.setSpacing(6)
+        right_layout.setSpacing(4)
         right_layout.setContentsMargins(0, 0, 0, 0)
 
         input_group = QGroupBox("模型与输入")
         input_layout = QVBoxLayout()
-        input_layout.setSpacing(8)
-        input_layout.setContentsMargins(10, 22, 10, 10)
+        input_layout.setSpacing(6)
+        input_layout.setContentsMargins(8, 20, 8, 8)
 
         model_section = QLabel("当前模型")
         model_section.setObjectName("sectionLabel")
@@ -597,11 +617,14 @@ class YOLOv8GUI(QMainWindow):
         self.collision_cb.setChecked(True)
         self.zone_cb = QCheckBox("违规检测")
         self.zone_cb.setChecked(True)
+        self.overspeed_cb = QCheckBox("超速检测")
+        self.overspeed_cb.setChecked(False)
 
         feature_layout.addWidget(self.tracking_cb, 0, 0)
         feature_layout.addWidget(self.speed_cb, 0, 1)
         feature_layout.addWidget(self.collision_cb, 1, 0)
         feature_layout.addWidget(self.zone_cb, 1, 1)
+        feature_layout.addWidget(self.overspeed_cb, 2, 0)
         input_layout.addLayout(feature_layout)
 
         input_group.setLayout(input_layout)
@@ -609,8 +632,8 @@ class YOLOv8GUI(QMainWindow):
 
         param_group = QGroupBox("检测参数")
         param_layout = QVBoxLayout()
-        param_layout.setSpacing(6)
-        param_layout.setContentsMargins(10, 22, 10, 10)
+        param_layout.setSpacing(4)
+        param_layout.setContentsMargins(8, 20, 8, 8)
 
         conf_row = QHBoxLayout()
         conf_row.addWidget(QLabel("置信度:"))
@@ -659,13 +682,35 @@ class YOLOv8GUI(QMainWindow):
         calib_row.addStretch()
         param_layout.addLayout(calib_row)
 
+        overspeed_row = QHBoxLayout()
+        overspeed_row.addWidget(QLabel("超速阈值(km/h):"))
+        self.overspeed_threshold_spin = QSpinBox()
+        self.overspeed_threshold_spin.setRange(10, 300)
+        self.overspeed_threshold_spin.setValue(60)
+        self.overspeed_threshold_spin.setSuffix(" km/h")
+        self.overspeed_threshold_spin.valueChanged.connect(self.on_overspeed_threshold_changed)
+        overspeed_row.addWidget(self.overspeed_threshold_spin)
+        param_layout.addLayout(overspeed_row)
+
+        audio_row = QHBoxLayout()
+        self.select_audio_btn = QPushButton("选择报警音频")
+        self.select_audio_btn.setObjectName("warningBtn")
+        self.select_audio_btn.setFixedHeight(30)
+        self.select_audio_btn.clicked.connect(self.select_audio_file)
+        audio_row.addWidget(self.select_audio_btn)
+        self.audio_path_label = QLabel("未选择")
+        self.audio_path_label.setObjectName("hintText")
+        self.audio_path_label.setWordWrap(True)
+        audio_row.addWidget(self.audio_path_label, 1)
+        param_layout.addLayout(audio_row)
+
         param_group.setLayout(param_layout)
         right_layout.addWidget(param_group)
 
         draw_group = QGroupBox("绘制工具")
         draw_layout = QVBoxLayout()
-        draw_layout.setSpacing(8)
-        draw_layout.setContentsMargins(10, 22, 10, 10)
+        draw_layout.setSpacing(4)
+        draw_layout.setContentsMargins(8, 20, 8, 8)
 
         self.draw_state_label = QLabel("状态：未启用绘制工具")
         self.draw_state_label.setObjectName("hintText")
@@ -673,25 +718,25 @@ class YOLOv8GUI(QMainWindow):
         draw_layout.addWidget(self.draw_state_label)
 
         draw_button_layout = QGridLayout()
-        draw_button_layout.setHorizontalSpacing(6)
-        draw_button_layout.setVerticalSpacing(6)
+        draw_button_layout.setHorizontalSpacing(4)
+        draw_button_layout.setVerticalSpacing(4)
         draw_button_layout.setContentsMargins(0, 0, 0, 0)
 
         self.draw_line_btn = QPushButton("绘制检测线")
         self.draw_line_btn.setObjectName("infoBtn")
-        self.draw_line_btn.setFixedHeight(34)
+        self.draw_line_btn.setFixedHeight(30)
         self.draw_line_btn.clicked.connect(self.start_draw_line)
         draw_button_layout.addWidget(self.draw_line_btn, 0, 0)
 
         self.draw_zone_btn = QPushButton("绘制违规区域")
         self.draw_zone_btn.setObjectName("infoBtn")
-        self.draw_zone_btn.setFixedHeight(34)
+        self.draw_zone_btn.setFixedHeight(30)
         self.draw_zone_btn.clicked.connect(self.start_draw_zone)
         draw_button_layout.addWidget(self.draw_zone_btn, 0, 1)
 
         self.clear_zones_btn = QPushButton("清空线/区域")
         self.clear_zones_btn.setObjectName("dangerBtn")
-        self.clear_zones_btn.setFixedHeight(34)
+        self.clear_zones_btn.setFixedHeight(30)
         self.clear_zones_btn.clicked.connect(self.clear_zones)
         draw_button_layout.addWidget(self.clear_zones_btn, 1, 0, 1, 2)
         draw_layout.addLayout(draw_button_layout)
@@ -701,25 +746,25 @@ class YOLOv8GUI(QMainWindow):
 
         control_group = QGroupBox("运行控制")
         control_layout = QHBoxLayout()
-        control_layout.setSpacing(8)
-        control_layout.setContentsMargins(10, 22, 10, 10)
+        control_layout.setSpacing(4)
+        control_layout.setContentsMargins(8, 20, 8, 8)
 
         self.start_btn = QPushButton("开始检测")
         self.start_btn.setObjectName("primaryBtn")
-        self.start_btn.setFixedHeight(38)
+        self.start_btn.setFixedHeight(34)
         self.start_btn.clicked.connect(self.start_detection)
         control_layout.addWidget(self.start_btn)
 
         self.pause_btn = QPushButton("暂停")
         self.pause_btn.setObjectName("infoBtn")
-        self.pause_btn.setFixedHeight(38)
+        self.pause_btn.setFixedHeight(34)
         self.pause_btn.clicked.connect(self.toggle_pause)
         self.pause_btn.setEnabled(False)
         control_layout.addWidget(self.pause_btn)
 
         self.stop_btn = QPushButton("停止")
         self.stop_btn.setObjectName("dangerBtn")
-        self.stop_btn.setFixedHeight(38)
+        self.stop_btn.setFixedHeight(34)
         self.stop_btn.clicked.connect(self.stop_detection)
         self.stop_btn.setEnabled(False)
         control_layout.addWidget(self.stop_btn)
@@ -734,6 +779,7 @@ class YOLOv8GUI(QMainWindow):
         self.reset_warning_views()
         self.reset_metrics_display()
         self._sync_runtime_option_states()
+        self.refresh_runtime_overview()
 
     def _create_kpi_card(self, title, object_name, value="0", note=""):
         """创建 KPI 指标卡。"""
@@ -765,19 +811,15 @@ class YOLOv8GUI(QMainWindow):
             self.draw_hint_label.setText(text)
         if hasattr(self, 'draw_state_label'):
             self.draw_state_label.setText(f"状态：{message}")
+        if hasattr(self, 'status_label'):
+            self.refresh_runtime_overview(self.last_live_stats)
 
     def reset_metrics_display(self):
-        """重置 KPI 与运行提示。"""
-        if hasattr(self, 'unique_vehicle_value_label'):
-            self.unique_vehicle_value_label.setText("0")
-            self.unique_vehicle_note_label.setText("会话累计")
-            self.current_vehicle_value_label.setText("0")
-            self.current_vehicle_note_label.setText("已确认轨迹")
-            self.warning_count_value_label.setText("0")
-            self.warning_count_note_label.setText("碰撞 / 违规")
-            self.runtime_value_label.setText("0.0")
-            self.runtime_note_label.setText("等待开始检测")
-        self.set_draw_hint("未启用绘制工具")
+        """重置运行提示。"""
+        self.set_draw_hint("")
+        if hasattr(self, 'total_vehicle_label'):
+            self.total_vehicle_label.setText("总车辆: 0")
+            self.fps_label.setText("FPS: 0.0")
 
     def _log_runtime_environment(self, device_preference=None, video_resolution_profile=None):
         """记录当前 GUI 实际使用的解释器和推理设备。"""
@@ -838,6 +880,7 @@ class YOLOv8GUI(QMainWindow):
             self.stats_table.setItem(i, 1, QTableWidgetItem("0"))
             self.stats_table.setItem(i, 2, QTableWidgetItem("0"))
             self.stats_table.setItem(i, 3, QTableWidgetItem("0"))
+            self.stats_table.setItem(i, 4, QTableWidgetItem("0"))
 
     def _rebuild_stats_table(self):
         """按当前模型类别重建统计表。"""
@@ -866,11 +909,13 @@ class YOLOv8GUI(QMainWindow):
         """切换检测模式"""
         self.stop_detection()
         self.current_mode = mode
+        self.runtime_status_message = "等待开始检测"
         self.image_label.clear()
         self.image_label.setText("选择检测模式后点击开始")
         self.reset_metrics_display()
         self.reset_warning_views()
         self._sync_runtime_option_states()
+        self.refresh_runtime_overview()
         self.log_message(f"切换到 {mode} 模式")
 
     def select_model_file(self):
@@ -1010,6 +1055,8 @@ class YOLOv8GUI(QMainWindow):
             enable_speed=self.speed_cb.isChecked(),
             enable_collision=self.collision_cb.isChecked(),
             enable_zone=self.zone_cb.isChecked(),
+            enable_overspeed=self.overspeed_cb.isChecked(),
+            overspeed_threshold=self.overspeed_threshold_spin.value(),
             pixels_per_meter=self.calib_spin.value(),
             safe_distance=self.distance_spin.value(),
             class_profile=self.class_profile,
@@ -1018,16 +1065,18 @@ class YOLOv8GUI(QMainWindow):
             device_preference=device_preference,
         )
         self.detection_thread.set_preview_target_size(self.image_label.width(), self.image_label.height())
-        self.detection_thread.status_update.connect(self.status_label.setText)
+        self.detection_thread.status_update.connect(self.handle_runtime_status_update)
         self.detection_thread.stats_update.connect(self.update_stats)
         self.detection_thread.warning_update.connect(self.update_warnings)
         self.detection_thread.preview_ready.connect(self.request_preview_refresh)
+        self.detection_thread.overspeed_alert.connect(self.handle_overspeed_alert)
         self.detection_thread.start()
         self.start_preview_refresh()
 
         self.set_running_state(True)
-        self.runtime_note_label.setText(self._build_runtime_note_text(0.0))
+        self.runtime_status_message = "运行中"
         self.set_draw_hint("未启用绘制工具")
+        self.refresh_runtime_overview()
         self.log_message("摄像头检测已开始")
 
     def start_video(self):
@@ -1059,6 +1108,8 @@ class YOLOv8GUI(QMainWindow):
                 enable_speed=self.speed_cb.isChecked(),
                 enable_collision=self.collision_cb.isChecked(),
                 enable_zone=self.zone_cb.isChecked(),
+                enable_overspeed=self.overspeed_cb.isChecked(),
+                overspeed_threshold=self.overspeed_threshold_spin.value(),
                 pixels_per_meter=self.calib_spin.value(),
                 safe_distance=self.distance_spin.value(),
                 class_profile=self.class_profile,
@@ -1068,16 +1119,18 @@ class YOLOv8GUI(QMainWindow):
                 video_resolution_profile=video_resolution_profile,
             )
             self.detection_thread.set_preview_target_size(self.image_label.width(), self.image_label.height())
-            self.detection_thread.status_update.connect(self.status_label.setText)
+            self.detection_thread.status_update.connect(self.handle_runtime_status_update)
             self.detection_thread.stats_update.connect(self.update_stats)
             self.detection_thread.warning_update.connect(self.update_warnings)
             self.detection_thread.preview_ready.connect(self.request_preview_refresh)
+            self.detection_thread.overspeed_alert.connect(self.handle_overspeed_alert)
             self.detection_thread.start()
             self.start_preview_refresh()
 
             self.set_running_state(True)
-            self.runtime_note_label.setText(self._build_runtime_note_text(0.0))
+            self.runtime_status_message = "运行中"
             self.set_draw_hint("未启用绘制工具")
+            self.refresh_runtime_overview()
             self.log_message("视频检测已开始")
 
     def detect_image(self):
@@ -1097,7 +1150,7 @@ class YOLOv8GUI(QMainWindow):
 
         try:
             self._log_runtime_environment(device_preference=self._selected_device_preference())
-            image_device, image_half, image_device_name = resolve_runtime_device(
+            image_device, image_half, _ = resolve_runtime_device(
                 self._selected_device_preference()
             )
             image = cv2.imread(file_path)
@@ -1156,6 +1209,7 @@ class YOLOv8GUI(QMainWindow):
                 'current_vehicle_count': current_vehicle_count,
                 'warning_count': 0,
                 'class_counts': class_counts,
+                'cumulative_class_counts': class_counts,
                 'up_counts': {},
                 'down_counts': {},
                 'track_count': 0,
@@ -1171,11 +1225,9 @@ class YOLOv8GUI(QMainWindow):
                 'inference_fps': 0.0,
                 'fps': 0.0,
             })
-            self.runtime_note_label.setText(f"单图 | {image_device_name}")
+            self.runtime_status_message = "图片检测完成"
             self.reset_warning_views()
-            self.status_label.setText(
-                f"图片检测完成 | 设备：{image_device_name} | 当前车辆：{current_vehicle_count} | 去重总车辆：{current_vehicle_count}"
-            )
+            self.refresh_runtime_overview()
             self.log_message(f"检测到 {len(detections)} 个目标")
 
         except Exception as e:
@@ -1184,6 +1236,11 @@ class YOLOv8GUI(QMainWindow):
     def update_stats(self, stats):
         """更新统计信息"""
         apply_stats_update(self, stats)
+        self.refresh_runtime_overview(stats)
+        unique_total = stats.get("unique_vehicle_total", 0)
+        display_fps = stats.get("display_fps", stats.get("fps", 0.0))
+        self.total_vehicle_label.setText(f"总车辆: {unique_total}")
+        self.fps_label.setText(f"FPS: {display_fps:.1f}")
 
     def update_warnings(self, warnings):
         """更新预警信息"""
@@ -1242,13 +1299,14 @@ class YOLOv8GUI(QMainWindow):
         self.pause_btn.setText("暂停")
         self.image_label.clear()
         self.image_label.setText("选择检测模式后点击开始")
-        self.status_label.setText("就绪 | 等待开始检测...")
+        self.runtime_status_message = "等待开始检测"
         self.displayed_pixmap_rect = None
         self.original_frame_size = None
         self.drawing_mode = None
         self.drawing_points = []
         self.reset_warning_views()
         self.reset_metrics_display()
+        self.refresh_runtime_overview()
 
     def toggle_pause(self):
         """暂停/继续"""
@@ -1258,7 +1316,8 @@ class YOLOv8GUI(QMainWindow):
             state = "暂停" if paused else "继续"
             self.log_message(f"检测已{state}")
             self.pause_btn.setText("继续" if paused else "暂停")
-            self.runtime_note_label.setText("已暂停" if paused else "等待推理刷新")
+            self.runtime_status_message = "已暂停" if paused else "运行中"
+            self.refresh_runtime_overview(self.last_live_stats)
 
     def on_conf_changed(self, value):
         """置信度变化"""
@@ -1279,6 +1338,47 @@ class YOLOv8GUI(QMainWindow):
         """标定参数变化"""
         if self.detection_thread:
             self.detection_thread.update_calibration(value)
+
+    def on_overspeed_threshold_changed(self, value):
+        """超速阈值变化"""
+        if self.detection_thread:
+            self.detection_thread.update_overspeed_threshold(value)
+
+    def select_audio_file(self):
+        """选择报警音频文件"""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "选择报警音频文件", "",
+            "音频文件 (*.wav *.mp3 *.ogg *.flac);;所有文件 (*.*)"
+        )
+        if file_path:
+            self._alarm_audio_path = file_path
+            self.audio_path_label.setText(os.path.basename(file_path))
+            self.log_message(f"已选择报警音频: {file_path}")
+
+    def handle_overspeed_alert(self, alert_data):
+        """超速报警处理 - 播放音频"""
+        # 在单独的线程中播放音频，不阻塞 UI
+        if hasattr(self, '_alarm_audio_path') and self._alarm_audio_path:
+            audio_path = self._alarm_audio_path
+            if os.path.exists(audio_path):
+                threading.Thread(
+                    target=self._play_audio,
+                    args=(audio_path,),
+                    daemon=True,
+                ).start()
+
+    def _play_audio(self, audio_path):
+        """播放音频文件（在后台线程中运行）"""
+        try:
+            import winsound
+            ext = os.path.splitext(audio_path)[1].lower()
+            if ext == '.wav':
+                winsound.PlaySound(audio_path, winsound.SND_ASYNC | winsound.SND_NODEFAULT)
+            else:
+                # 非 wav 格式尝试用 PlaySound 带文件名标志
+                winsound.PlaySound(audio_path, winsound.SND_ASYNC | winsound.SND_NODEFAULT | winsound.SND_FILENAME)
+        except Exception as e:
+            self.log_message(f"播放音频失败：{e}")
 
     def update_thread_params(self):
         """实时更新检测线程参数"""

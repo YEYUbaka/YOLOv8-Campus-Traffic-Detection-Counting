@@ -94,6 +94,7 @@ class FrameReaderThread(QThread):
         self._latest_sequence = 0
         self._latest_decode_ms = 0.0
         self._open_error = None
+        self._video_ended = False
 
     def run(self):
         cap = open_video_capture(self.source, self.source_mode)
@@ -107,10 +108,22 @@ class FrameReaderThread(QThread):
 
         self._ready_event.set()
 
+        # 视频模式帧率控制
+        frame_duration = 1.0 / self.source_fps if self.source_mode == "video" and self.source_fps > 0 else 0.0
+        last_frame_time = 0.0
+
         while self.running:
             if self.paused:
                 self.msleep(10)
                 continue
+
+            # 视频模式：按原始帧率控制读取速度
+            if self.source_mode == "video" and frame_duration > 0:
+                now = time.perf_counter()
+                if last_frame_time > 0 and (now - last_frame_time) < frame_duration:
+                    self.msleep(1)
+                    continue
+                last_frame_time = now
 
             read_start = time.perf_counter()
             ret, frame = cap.read()
@@ -118,8 +131,8 @@ class FrameReaderThread(QThread):
 
             if not ret:
                 if self.source_mode == "video":
-                    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-                    next_deadline = time.perf_counter()
+                    self._video_ended = True
+                    self.msleep(100)
                     continue
                 self.msleep(5)
                 continue
@@ -129,7 +142,6 @@ class FrameReaderThread(QThread):
                 self._latest_sequence += 1
                 self._latest_decode_ms = decode_ms
 
-            # 文件模式优先吃满解码吞吐，显示层只取最新帧。
             if self.source_mode == "camera":
                 time.sleep(0.001)
 
@@ -165,6 +177,7 @@ class DetectionThread(QThread):
     status_update = pyqtSignal(str)
     stats_update = pyqtSignal(dict)  # 统计数据更新
     warning_update = pyqtSignal(dict)  # 预警信息更新
+    overspeed_alert = pyqtSignal(dict)  # 超速报警信号
 
     def __init__(
         self,
@@ -176,6 +189,8 @@ class DetectionThread(QThread):
         enable_speed=True,
         enable_collision=True,
         enable_zone=True,
+        enable_overspeed=False,
+        overspeed_threshold=60,
         pixels_per_meter=10.0,
         safe_distance=5.0,
         class_profile: TrafficClassProfile = None,
@@ -211,6 +226,9 @@ class DetectionThread(QThread):
         self.enable_speed = enable_speed
         self.enable_collision = enable_collision
         self.enable_zone = enable_zone
+        self.enable_overspeed = enable_overspeed
+        self.overspeed_threshold = float(overspeed_threshold)
+        self._overspeed_alerted_ids = set()
 
         self.device, self.use_half, self.device_display_name = resolve_runtime_device(
             self.device_preference
@@ -230,7 +248,15 @@ class DetectionThread(QThread):
         self.max_det = self._resolve_max_det()
         self.base_max_det = self.max_det
         self.target_frame_interval = 1.0 / self.source_fps if self.source_mode == "video" and self.source_fps > 0 else 0.0
-        self.sequential_video_playback = False
+        self.sequential_video_playback = self.source_mode == "video"
+        self._video_frame_interval = 1.0 / max(1.0, self.source_fps)
+        self._last_video_frame_time = 0.0
+
+        # 视频进度追踪
+        self._video_total_frames = 0
+        self._video_current_frame = 0
+        self._video_progress_sec = 0.0
+        self._video_total_sec = 0.0
         cpu_live_mode = self.cpu_optimized and self.source_mode in {"video", "camera"}
         self.frame_stride = 1
         self.max_frame_stride = 1
@@ -324,6 +350,7 @@ class DetectionThread(QThread):
             "speed_infos": [],
             "collision_warnings": [],
             "zone_violations": [],
+            "overspeed_track_ids": set(),
             "class_counts": {},
             "up_counts": {},
             "down_counts": {},
@@ -337,6 +364,7 @@ class DetectionThread(QThread):
             "current_vehicle_count": 0,
             "warning_count": 0,
             "class_counts": {},
+            "cumulative_class_counts": {},
             "up_counts": {},
             "down_counts": {},
             "track_count": 0,
@@ -747,6 +775,7 @@ class DetectionThread(QThread):
     def _build_stats_payload(
         self,
         class_counts,
+        cumulative_class_counts,
         up_counts,
         down_counts,
         unique_vehicle_total,
@@ -760,6 +789,7 @@ class DetectionThread(QThread):
             "current_vehicle_count": current_vehicle_count,
             "warning_count": warning_count,
             "class_counts": class_counts,
+            "cumulative_class_counts": cumulative_class_counts,
             "up_counts": up_counts,
             "down_counts": down_counts,
             "track_count": track_count,
@@ -777,6 +807,14 @@ class DetectionThread(QThread):
         }
 
     def run(self):
+        # 初始化视频总帧数
+        if self.source_mode == "video":
+            temp_cap = cv2.VideoCapture(self.source)
+            if temp_cap.isOpened():
+                self._video_total_frames = int(temp_cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                self._video_total_sec = self._video_total_frames / max(1.0, self.source_fps)
+            temp_cap.release()
+
         self.frame_reader = FrameReaderThread(self.source, self.source_mode, self.source_fps)
         self.frame_reader.start()
         if not self.frame_reader.wait_until_ready():
@@ -808,13 +846,21 @@ class DetectionThread(QThread):
             while self.running:
                 if self.paused:
                     self.frame_reader.set_paused(True)
-                    current_time = time.strftime("%H:%M:%S")
-                    self.status_update.emit(f"时间：{current_time} | 已暂停")
+                    self.status_update.emit("已暂停")
                     self.msleep(50)
                     continue
 
                 self.frame_reader.set_paused(False)
                 frame_packet = self.frame_reader.get_latest_frame(last_processed_sequence)
+
+                # 视频播放完毕→自动暂停
+                if frame_packet is None and self.source_mode == "video":
+                    if self.frame_reader and self.frame_reader._video_ended:
+                        self.set_paused(True)
+                        self.status_update.emit("视频播放完毕")
+                        self.msleep(100)
+                        continue
+
                 if frame_packet is None:
                     self.msleep(1)
                     continue
@@ -832,6 +878,21 @@ class DetectionThread(QThread):
                         self.source_height = self.raw_source_height
                         self.inference_imgsz = self._resolve_inference_imgsz()
 
+                # 视频模式：按原始帧率节流处理速度
+                if self.source_mode == "video" and self._video_frame_interval > 0:
+                    now = time.perf_counter()
+                    if self._last_video_frame_time > 0:
+                        sleep_needed = self._video_frame_interval - (now - self._last_video_frame_time)
+                        if sleep_needed > 0.002:
+                            time.sleep(sleep_needed)
+                    self._last_video_frame_time = time.perf_counter()
+
+                # 更新视频帧进度
+                if self.source_mode == "video":
+                    frame_index = self.frame_reader._latest_sequence if self.frame_reader else 0
+                    self._video_current_frame = frame_index
+                    self._video_progress_sec = self._video_current_frame / max(1.0, self.source_fps)
+
                 try:
                     working_frame = self._preprocess_inference_frame(frame)
                     self._sync_inference_device()
@@ -848,6 +909,7 @@ class DetectionThread(QThread):
                     session_counts = self.vehicle_session_counter.update(tracks)
                     unique_vehicle_total = session_counts["unique_vehicle_total"]
                     current_vehicle_count = session_counts["current_vehicle_count"]
+                    cumulative_class_counts = session_counts.get("unique_class_counts", {})
 
                     if self.line_counter.is_line_set():
                         count_result = self.line_counter.update(tracks)
@@ -900,8 +962,47 @@ class DetectionThread(QThread):
                         zone_violations = self.zone_detector.check_violations(tracks)
                         self._cached_zone_violations = list(zone_violations)
 
+                    # 超速检测
+                    if self.enable_overspeed and self.enable_speed and speed_infos:
+                        current_overspeed_ids = set()
+                        for sinfo in speed_infos:
+                            if sinfo.speed > self.overspeed_threshold:
+                                current_overspeed_ids.add(sinfo.track_id)
+                        # 检测到新的超速车辆时触发报警
+                        new_overspeed = current_overspeed_ids - self._overspeed_alerted_ids
+                        if new_overspeed:
+                            overspeed_details = [
+                                {
+                                    "track_id": sinfo.track_id,
+                                    "class_name": sinfo.class_name,
+                                    "speed": sinfo.speed,
+                                    "position": sinfo.position,
+                                }
+                                for sinfo in speed_infos
+                                if sinfo.track_id in new_overspeed
+                            ]
+                            self.overspeed_alert.emit({
+                                "type": "overspeed",
+                                "vehicles": overspeed_details,
+                                "threshold": self.overspeed_threshold,
+                            })
+                            # 记录日志
+                            for od in overspeed_details:
+                                self._append_timeline_item(
+                                    f"超速：{od['class_name']}#"
+                                    f"{od['track_id']} {od['speed']:.0f}km/h"
+                                )
+                        self._overspeed_alerted_ids = current_overspeed_ids
+
                     speed_range = self.speed_estimator.get_speed_range(tracks) if self.enable_speed else (0.0, 0.0)
                     warning_count = len(collision_warnings) + len(zone_violations)
+
+                    overspeed_track_ids = set()
+                    if self.enable_overspeed and speed_infos:
+                        overspeed_track_ids = {
+                            sinfo.track_id for sinfo in speed_infos
+                            if sinfo.speed > self.overspeed_threshold
+                        }
 
                     self.last_render_payload = {
                         "detections": detections,
@@ -909,6 +1010,7 @@ class DetectionThread(QThread):
                         "speed_infos": speed_infos,
                         "collision_warnings": collision_warnings,
                         "zone_violations": zone_violations,
+                        "overspeed_track_ids": overspeed_track_ids,
                         "class_counts": class_counts,
                         "up_counts": up_counts,
                         "down_counts": down_counts,
@@ -917,6 +1019,7 @@ class DetectionThread(QThread):
                     }
                     self.last_stats_payload = self._build_stats_payload(
                         class_counts,
+                        cumulative_class_counts,
                         up_counts,
                         down_counts,
                         unique_vehicle_total,
@@ -1049,11 +1152,12 @@ class DetectionThread(QThread):
         speed_infos,
         collision_warnings,
         zone_violations,
-        class_counts,
-        up_counts,
-        down_counts,
-        unique_vehicle_total,
-        current_vehicle_count,
+        overspeed_track_ids=None,
+        class_counts=None,
+        up_counts=None,
+        down_counts=None,
+        unique_vehicle_total=None,
+        current_vehicle_count=None,
     ):
         """绘制所有检测结果"""
         output = frame
@@ -1062,6 +1166,7 @@ class DetectionThread(QThread):
         show_tracking_lines = self.enable_tracking and len(tracks) <= self.max_tracking_line_tracks
         collision_markers = collision_warnings[:self.max_warning_markers]
         zone_markers = zone_violations[:self.max_warning_markers]
+        overspeed_ids = set(overspeed_track_ids or [])
 
         def _bbox_area(bbox):
             x1, y1, x2, y2 = bbox
@@ -1132,6 +1237,14 @@ class DetectionThread(QThread):
 
                 if show_tracking_lines and len(track.history) > 1:
                     output = DrawingUtils.draw_tracking_line(output, track.history)
+
+                # 超速高亮标记
+                if self.enable_overspeed and track.track_id in overspeed_ids:
+                    x1, y1, x2, y2 = [int(v) for v in track.bbox]
+                    center = ((x1 + x2) // 2, (y1 + y2) // 2)
+                    output = DrawingUtils.draw_warning(output, center, "超速!", "high")
+                    # 绘制红色边框
+                    cv2.rectangle(output, (x1, y1), (x2, y2), (0, 0, 255), 3)
         else:
             for det_index, (bbox, class_id, confidence) in enumerate(detections):
                 output = DrawingUtils.draw_detection_box(
@@ -1168,6 +1281,10 @@ class DetectionThread(QThread):
         """实时更新检测参数"""
         self.conf_threshold = conf_threshold
         self.iou_threshold = iou_threshold
+
+    def update_overspeed_threshold(self, threshold):
+        """更新超速阈值"""
+        self.overspeed_threshold = float(threshold)
 
     def update_calibration(self, pixels_per_meter):
         """更新标定参数"""
@@ -1217,6 +1334,12 @@ class DetectionThread(QThread):
         self.drawing_mode = None
         self.drawing_points = []
         return points
+
+    def get_video_progress(self):
+        """获取视频播放进度 (当前秒, 总秒数)"""
+        if self.source_mode != "video":
+            return None
+        return (self._video_progress_sec, self._video_total_sec)
 
     def stop(self):
         self.running = False

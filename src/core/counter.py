@@ -107,6 +107,7 @@ class VehicleSessionCounter:
     """
 
     def __init__(self):
+        self.traffic_class_ids = set(DEFAULT_TRAFFIC_CLASS_PROFILE.traffic_class_ids)
         self.vehicle_class_ids = set(DEFAULT_TRAFFIC_CLASS_PROFILE.vehicle_class_ids)
         self.display_names = dict(DEFAULT_TRAFFIC_CLASS_PROFILE.display_names)
 
@@ -120,8 +121,23 @@ class VehicleSessionCounter:
 
     def set_class_profile(self, profile: TrafficClassProfile):
         """同步当前模型的车辆类集合和展示名。"""
+        self.traffic_class_ids = set(profile.traffic_class_ids)
         self.vehicle_class_ids = set(profile.vehicle_class_ids)
         self.display_names = dict(profile.display_names)
+
+    def _build_unique_class_counts(self) -> Dict[str, int]:
+        counts = defaultdict(int)
+        for state in self.unique_vehicles.values():
+            if state.class_id not in self.traffic_class_ids:
+                continue
+
+            class_name = self.display_names.get(
+                state.class_id,
+                state.class_name or f'未知({state.class_id})',
+            )
+            counts[class_name] += 1
+
+        return dict(counts)
 
     def _compute_distance(
         self,
@@ -205,12 +221,12 @@ class VehicleSessionCounter:
         """更新会话级唯一车辆总数与当前画面车辆数。"""
         self.frame_index += 1
 
-        vehicle_tracks = [
+        tracked_objects = [
             track for track in tracks
-            if hasattr(track, 'class_id') and track.class_id in self.vehicle_class_ids
+            if hasattr(track, 'class_id') and track.class_id in self.traffic_class_ids
         ]
 
-        current_track_ids = {track.track_id for track in vehicle_tracks if hasattr(track, 'track_id')}
+        current_track_ids = {track.track_id for track in tracked_objects if hasattr(track, 'track_id')}
 
         for track_id in list(self.track_to_unique.keys()):
             if track_id not in current_track_ids:
@@ -222,7 +238,7 @@ class VehicleSessionCounter:
 
         self._prune_reconnect_candidates()
 
-        for track in vehicle_tracks:
+        for track in tracked_objects:
             track_id = getattr(track, 'track_id', None)
             bbox = getattr(track, 'bbox', None)
             center = getattr(track, 'center', None)
@@ -260,9 +276,21 @@ class VehicleSessionCounter:
             state.active_track_id = track_id
             self.reconnect_candidates.pop(unique_id, None)
 
+        current_vehicle_count = sum(
+            1
+            for track in tracked_objects
+            if getattr(track, 'class_id', None) in self.vehicle_class_ids
+        )
+        unique_vehicle_total = sum(
+            1
+            for state in self.unique_vehicles.values()
+            if state.class_id in self.vehicle_class_ids
+        )
+
         return {
-            'unique_vehicle_total': len(self.unique_vehicles),
-            'current_vehicle_count': len(vehicle_tracks),
+            'unique_vehicle_total': unique_vehicle_total,
+            'current_vehicle_count': current_vehicle_count,
+            'unique_class_counts': self._build_unique_class_counts(),
         }
 
     def reset(self):
