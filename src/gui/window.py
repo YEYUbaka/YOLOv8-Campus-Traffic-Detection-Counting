@@ -91,6 +91,9 @@ class YOLOv8GUI(QMainWindow):
 
         # 超速报警
         self._alarm_audio_path = None
+        self._alarm_playing = False
+        self._alarm_cooldown_sec = 3.0
+        self._alarm_last_trigger = 0.0
 
         # 目录路径（兼容 PyInstaller 打包模式）
         from GUI import get_resource_path, get_external_path
@@ -1358,28 +1361,28 @@ class YOLOv8GUI(QMainWindow):
 
     def handle_overspeed_alert(self, alert_data):
         """超速报警处理 - 播放音频"""
-        # 在单独的线程中播放音频，不阻塞 UI
-        if hasattr(self, '_alarm_audio_path') and self._alarm_audio_path:
-            audio_path = self._alarm_audio_path
-            if os.path.exists(audio_path):
-                threading.Thread(
-                    target=self._play_audio,
-                    args=(audio_path,),
-                    daemon=True,
-                ).start()
+        if not self._alarm_audio_path or not os.path.exists(self._alarm_audio_path):
+            return
+        now = time.time()
+        if self._alarm_playing or (now - self._alarm_last_trigger) < self._alarm_cooldown_sec:
+            return
+        self._alarm_last_trigger = now
+        self._alarm_playing = True
+        threading.Thread(
+            target=self._play_audio,
+            args=(self._alarm_audio_path,),
+            daemon=True,
+        ).start()
 
     def _play_audio(self, audio_path):
         """播放音频文件（在后台线程中运行）"""
         try:
             import winsound
-            ext = os.path.splitext(audio_path)[1].lower()
-            if ext == '.wav':
-                winsound.PlaySound(audio_path, winsound.SND_ASYNC | winsound.SND_NODEFAULT)
-            else:
-                # 非 wav 格式尝试用 PlaySound 带文件名标志
-                winsound.PlaySound(audio_path, winsound.SND_ASYNC | winsound.SND_NODEFAULT | winsound.SND_FILENAME)
+            winsound.PlaySound(audio_path, winsound.SND_FILENAME | winsound.SND_NODEFAULT)
         except Exception as e:
             self.log_message(f"播放音频失败：{e}")
+        finally:
+            self._alarm_playing = False
 
     def update_thread_params(self):
         """实时更新检测线程参数"""
